@@ -12,9 +12,7 @@
         dmf.Application = function (options)
         {
             this.options = {
-                rest: {
-                    base_url: 'http://localhost/'
-                }
+                default_store: null
             }
             
             if (options)
@@ -23,7 +21,11 @@
                 {
                     if (this.options[n])
                     {
-                        $.extend(this.options[n], options[n])
+                        
+                        Object.keys(options[n], function (m)
+                        {
+                            this.options[n][m] = options[n][m]
+                        }.bind(this))
                     }
                 })
             }
@@ -186,12 +188,16 @@
             model.meta = model.prototype._meta = {
                 name: null,
                 primary_key: 'id',
-                validates: true
+                validates: true,
+                store: null
             }
             
             if (meta)
             {
-                $.extend(model.meta, meta)
+                Object.keys(meta).forEach(function (k)
+                {
+                    model.meta[k] = meta[k]
+                })
             }
             
             return model
@@ -210,7 +216,7 @@
         }
         dmf.store.LocalStore.prototype = 
         {
-            get: function (model, callback)
+            get: function (model, query, callback)
             {
                 var keys = this._get_model_keys(model),
                     models = keys.map(this._get_by_key.bind(this, model)),
@@ -219,7 +225,7 @@
                 callback(models, null)
             },
             
-            get_by_id: function (model, id, callback)
+            get_by_id: function (model, id, query, callback)
             {
                 var key = this._get_model_prefix(model) + id,
                     callback = callback || function () {}
@@ -237,7 +243,7 @@
                 callback(inst, null)
             },
             
-            save: function (inst, callback)
+            save: function (inst, query, callback)
             {
                 var key = this._get_instance_key(inst),
                     data = JSON.stringify(inst.get_fields()),
@@ -248,7 +254,7 @@
                 callback(inst, null)
             },
             
-            delete: function (inst, callback)
+            delete: function (inst, query, callback)
             {
                 var key = this._get_instance_key(inst),
                     callback = callback || function () {}
@@ -317,6 +323,188 @@
                 {
                     var fields = JSON.parse(data)
                     return new model(fields)
+                }
+            }
+        }
+        
+        /*
+         * Storage that communicates with a server via REST.
+         * 
+         * All responses from the server must be in JSON. Unless there is an error, all responses should be 200.
+         * The following conventions must be observed to be compatible with this client:
+         * 
+         * GET /things/ - returns a list of objects
+         *     
+         *     [
+         *         { "name": "Thing One" },
+         *         { "name": "Thing Two" }
+         *     ]
+         *     
+         * GET /things/<id> - returns a single object with the given ID, or a 404 response
+         * 
+         *     { "name": "Thing One" }
+         * 
+         * POST /things/ - accepts "application/x-www-form-urlencoded", returns a single object
+         * 
+         *     REQUEST BODY:
+         *     name=Thing%20Three
+         *     
+         *     RESPONSE BODY:
+         *     { "name": "Thing Three" }
+         * 
+         * If there is an error in the request data, respond with 400 status and an error object:
+         * 
+         *     { "error": "See validation errors", "validation_errors": {"name": "This field is required"} }
+         *     
+         * PUT /things/<id> - same convention as POST but returns a 404 response if there is no object with the given id.
+         * 
+         * DELETE /things/<id> - delete the object with the given id, or send a 404 response
+         */
+        dmf.store.RESTStore = function (options)
+        {
+            this.options = {
+                base_url: 'http://localhost/'
+            }
+            
+            Object.keys(options).forEach(function (k)
+            {
+                if (this.options[k])
+                {
+                    this.options[k] = options[k]
+                }
+            }.bind(this))
+            
+            if (this.options.base_url[this.options.base_url.length - 1] != '/')
+            {
+                this.options.base_url += '/'
+            }
+        }
+        dmf.store.RESTStore.prototype = 
+        {
+            get: function (model, query, callback)
+            {
+                var callback = callback || function () {}
+                
+                this._request('GET', this._get_model_path(model), query, null, function (result, error)
+                {
+                    if (error)
+                    {
+                        callback(null, error)
+                    }
+                    
+                    if (result.constructor != Array)
+                    {
+                        callback(null, new Error("Invalid response from server. Expected an [obj1, obj2, ...], got '"+result+"'"))
+                    }
+                    
+                    callback(result.map(function (fields)
+                    {
+                        return new model(fields)
+                    }), null)
+                })
+            },
+            
+            get_by_id: function (model, id, query, callback)
+            {
+                this._request('GET', this._get_model_path(model) + id, query, null, callback)
+            },
+            
+            save: function (inst, query, callback)
+            {
+                throw new Error('Not implemented')
+            },
+            
+            delete: function (inst, query, callback)
+            {
+                throw new Error('Not implemented')
+            },
+            
+            _get_model_path: function (model)
+            {
+                var meta = model.meta || model._meta
+                
+                if (!meta.name)
+                {
+                    throw new Error("Models without names can't use REST storage. Set a value for 'name' in your model's meta definition.")
+                }
+                
+                var name = meta.plural_name ? meta.plural_name : meta.name
+                
+                return name.toLowerCase() + '/'
+            },
+            
+            _request: function (method, path, query, data, callback)
+            {
+                var req = new XMLHttpRequest()
+                req.onabort = function ()
+                {
+                    callback(null, new Error('Request aborted.'))
+                }
+                req.onerror = function ()
+                {
+                    callback(null, new Error("Request failed."))
+                }
+                req.onload = function ()
+                {
+                    if (this.status != 200)
+                    {
+                        var error = new Error(this.responseText || "An error occurred")
+                        error.status = this.status
+                        callback(null, error)
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var result = JSON.parse(this.responseText)
+                        }
+                        catch (e)
+                        {
+                            callback(null, e)
+                            return
+                        }
+                        
+                        callback(result, null)
+                    }
+                }
+                
+                if (path[0] == '/')
+                {
+                    path = path.substr(1)
+                }
+                
+                var url = this.options.base_url + path
+                
+                if (query)
+                {
+                    var qs = Object.keys(query).map(function ()
+                    {
+                        
+                    }).join('&')
+                    
+                    if (qs)
+                    {
+                        url += '?' + qs
+                    }
+                }
+                
+                req.open(method, url, true)
+                req.setRequestHeader('Accepts', 'application/x-json,text/javascript,text/plain; charset=utf-8')
+                
+                if (data)
+                {
+                    var form_data = new FormData()
+                    
+                    Object.keys(data).forEach(function (k)
+                    {
+                        form_data.append(k, data[k])
+                    })
+                    
+                    req.send(form_data)
+                }
+                else
+                {
+                    req.send()
                 }
             }
         }
@@ -539,11 +727,10 @@
     
     if (typeof define != 'undefined')
     {
-        define(['jquery'], init)
+        define(init)
     }
     else if (typeof module != 'undefined' && module.exports)
     {
-        jquery = require('jquery')
         module.exports = init()
     }
     if (typeof window != 'undefined')

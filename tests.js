@@ -222,7 +222,7 @@ test('Local model storage', function ()
             }
         )
     
-    store.get(Pony, function (ponies, error)
+    store.get(Pony, {}, function (ponies, error)
     {
         equal(ponies.length, 0, "Local storage starts out empty")
     })
@@ -260,18 +260,18 @@ test('Local model storage', function ()
         }
     ].map(function (fields) { var p = new Pony(fields); store.save(p) })
     
-    store.get(Pony, function (all_ponies)
+    store.get(Pony, {}, function (all_ponies)
     {
         equal(all_ponies.length, ponies.length, "Can get all the saved instances")
     })
     
-    store.get_by_id(Pony, "Fahrvergnügen", function (pony)
+    store.get_by_id(Pony, "Fahrvergnügen", {}, function (pony)
     {
         equal(pony, null, "Nothing returned for nonexistent key")
     })
     
     var rainbow = null
-    store.get_by_id(Pony, "Rainbow Dash", function (pony)
+    store.get_by_id(Pony, "Rainbow Dash", {}, function (pony)
     {
         equal(pony.name, "Rainbow Dash", "Can retrieve instance by primary key")
         rainbow = pony
@@ -282,12 +282,117 @@ test('Local model storage', function ()
     rainbow.color = 'light blue'
     store.save(rainbow, function ()
     {
-        store.get_by_id(Pony, "Rainbow Dash", function (pony)
+        store.get_by_id(Pony, "Rainbow Dash", {}, function (pony)
         {
             equal(pony.color, "light blue", "Overwrote existing model")
         })
     })
+})
+
+asyncTest('Rest model storage', function ()
+{
+    var store = new dmf.store.RESTStore({
+        base_url: 'http://localhost:3002/'
+    })
     
+    store._request('GET', 'clear')
+    
+    var Pony = dmf.model.create(
+        {
+            name: null,
+            color: null,
+            cutie_mark: null
+        },
+        {
+            name: 'Pony',
+            plural_name: 'Ponies',
+            primary_key: 'name'
+        }
+    )
+    
+    var i=0,
+        next = function ()
+        {
+            if (i == test.length - 1)
+            {
+                start()
+            }
+            else
+            {
+                tests[i]()
+                i++
+            }
+        },
+        tests = [
+            function ()
+            {
+                var pony = new Pony({
+                    name: 'Twilight Sparkle',
+                    color: 'purple',
+                    cutie_mark: 'star'
+                })
+                
+                store.save(pony, {}, function (pony, error)
+                {
+                    equal(pony.name, "Twilight Sparkle", "Saved an instance")
+                    next()
+                })
+            },
+            function ()
+            {
+                store.get_by_id(Pony, 'Twilight Sparkle', {}, function (pony, error)
+                {
+                    equal(pony.name, "Twilight Sparkle", "Got an instance by id")
+                    next()
+                })
+            },
+            function ()
+            {
+                var pony = new Pony({
+                    name: 'Pinkie Pie',
+                    color: 'orange',
+                    cutie_mark: 'balloons'
+                })
+                
+                store.save(pony, {}, function ()
+                {
+                    store.get(Pony, {}, function (ponies)
+                    {
+                        equal(ponies.length, 2, "Got a list of instances")
+                        next()
+                    })
+                })
+            },
+            function ()
+            {
+                store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony)
+                {
+                    pony.color = 'pink'
+                    store.save(pony, {}, function ()
+                    {
+                        store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony)
+                        {
+                            equal(pony.color, 'pink', 'Updated instance')
+                            next()
+                        })
+                    })
+                })
+            },
+            function ()
+            {
+                store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony)
+                {
+                    store.delete(pony, function ()
+                    {
+                        store.get_by_id(Pony, 'Pinkie Pie', function (pony, error)
+                        {
+                            equal(pony, null, "Deleted an instance")
+                        })
+                    })
+                })
+            }
+        ]
+    next()
 })
 
 module('application')
