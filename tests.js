@@ -112,6 +112,42 @@ test('Catch-all listener', function ()
 
 module('models')
 
+var get_ponies = function ()
+{
+    return [
+        {
+            name: 'Twilight Sparkle',
+            color: 'purple',
+            cutie_mark: 'star'
+        },
+        {
+            name: 'Pinkie Pie',
+            color: 'pink',
+            cutie_mark: 'balloons'
+        },
+        {
+            name: 'Rarity',
+            color: 'white',
+            cutie_mark: 'diamonds'
+        },
+        {
+            name: 'Applejack',
+            color: 'orange',
+            cutie_mark: 'apples'
+        },
+        {
+            name: 'Fluttershy',
+            color: 'yellow',
+            cutie_mark: 'butterflies'
+        },
+        {
+            name: 'Rainbow Dash',
+            color: 'blue',
+            cutie_mark: 'rainbow bolt'
+        }
+    ]
+}
+
 test('Simple model', function ()
 {
     var Pony = dmf.model.create(
@@ -120,6 +156,8 @@ test('Simple model', function ()
         color: null,
         cutie_mark: null
     })
+    
+    expect(8)
     
     deepEqual(Object.keys(Pony.schema), ['name', 'color', 'cutie_mark'], "Model has all fields defined in schema")
     
@@ -144,6 +182,14 @@ test('Simple model', function ()
     
     twilight.color = 'super friendly purple'
     equal(counter.i, 1, "Property-level notifications only fired for registered property")
+    
+    ok(!twilight.is_deleted, "Model not marked delete when it's not")
+    
+    twilight.on('delete', function ()
+    {
+        ok(twilight.is_deleted, "Model is marked deleted when it is")
+    })
+    twilight.mark_deleted()
 })
 
 test('Property validation', function ()
@@ -198,11 +244,46 @@ test('Property validation', function ()
     
     counter.i = 0
     spell.on('invalid.strength', counter.inc)
-    spell.strength = 'you no spell good'
+    spell.strength = 'you spell ok, but weak'
     equal(counter.i, 1, "Property-level invalid notification works")
     
     spell.distance = 'you no far go'
     equal(counter.i, 1, "Property-level invalid notifications only fire for registered properties")
+})
+
+test('Model cache', function ()
+{
+    var Pony = dmf.model.create(
+        {
+            name: null,
+            color: null,
+            cutie_mark: null
+        },
+        {
+            primary_key: 'name'
+        }
+    )
+    
+    equal(Pony.cache.all.length, 0, "Model cache starts empty")
+    
+    get_ponies().map(function (fields) { new Pony(fields) })
+    equal(Pony.cache.all.length, get_ponies().length, "New instances added to cache")
+    
+    var a = Pony.cache.get('Applejack'),
+        b = Pony.cache.get('Applejack')
+    
+    equal(a, b, "Cache returns same instance for same id")
+    
+    var new_pony = new Pony()
+    equal(Pony.cache.all.length, get_ponies().length, "Instance without a primary key is not added to cache")
+    
+    new_pony.name = 'Newbius Rex'
+    equal(Pony.cache.all.length, get_ponies().length + 1, "Instance is added to cache when primary key is set")
+    equal(Pony.cache.get('Newbius Rex'), new_pony, "Instance added by setting primary key can be retrieved")
+    new_pony.name = 'Newbius Pest'
+    notEqual(Pony.cache.get('Newbius Rex'), new_pony, "Instance with a changed primary key is not accessible by its old key")
+    equal(Pony.cache.get('Newbius Pest'), new_pony, "Instance can be retrieved by its new primary key")
+    
 })
 
 test('Local model storage', function ()
@@ -220,7 +301,7 @@ test('Local model storage', function ()
             }
         )
     
-    expect(6)
+    expect(11)
     
     store.clear(Pony, {}, function ()
     {
@@ -229,38 +310,12 @@ test('Local model storage', function ()
             equal(ponies.length, 0, "Local storage starts out empty")
         })
         
-        var ponies = [
-            {
-                name: 'Twilight Sparkle',
-                color: 'purple',
-                cutie_mark: 'star'
-            },
-            {
-                name: 'Pinkie Pie',
-                color: 'pink',
-                cutie_mark: 'balloons'
-            },
-            {
-                name: 'Rarity',
-                color: 'white',
-                cutie_mark: 'diamonds'
-            },
-            {
-                name: 'Applejack',
-                color: 'orange',
-                cutie_mark: 'apples'
-            },
-            {
-                name: 'Fluttershy',
-                color: 'yellow',
-                cutie_mark: 'butterflies'
-            },
-            {
-                name: 'Rainbow Dash',
-                color: 'blue',
-                cutie_mark: 'rainbow bolt'
-            }
-        ].map(function (fields) { var p = new Pony(fields); store.create(p) })
+        var ponies = get_ponies().map(function (fields)
+        {
+            var p = new Pony(fields)
+            store.create(p)
+            return p
+        })
         
         store.get(Pony, {}, function (all_ponies)
         {
@@ -280,10 +335,18 @@ test('Local model storage', function ()
         })
         
         equal(rainbow.color, "blue", "Fields came through serialization OK")
+        ok(rainbow.is_stored, "Instance is marked as stored when retrieved")
+        ok(!rainbow.is_dirty, "Instance is not marked dirty when retrieved")
         
+        rainbow.color = 'blue'
+        ok(!rainbow.is_dirty, "Instance is not marked dirty when setting a field to its current value")
         rainbow.color = 'light blue'
+        ok(rainbow.is_dirty, "Instance is marked dirty when a field changes")
+        
         store.update(rainbow, {}, function ()
         {
+            ok(!rainbow.is_dirty, "Instance is not marked dirty after saving")
+            
             store.get_by_id(Pony, "Rainbow Dash", {}, function (pony)
             {
                 equal(pony.color, "light blue", "Overwrote existing model")
@@ -332,9 +395,12 @@ asyncTest('Rest model storage', function ()
                     cutie_mark: 'star'
                 })
                 
-                store.create(pony, {}, function (pony, error)
+                ok(!pony.is_stored, "Instance is marked as unstored when initially created")
+                
+                store.create(pony, {}, function (created_pony, error)
                 {
-                    equal(pony.name, "Twilight Sparkle", "Saved an instance")
+                    equal(created_pony, pony, "create() provides callback with the same instance it was passed")
+                    ok(pony.is_stored, "Instance is marked as stored after saving")
                     next()
                 })
             },
@@ -370,6 +436,8 @@ asyncTest('Rest model storage', function ()
                     pony.color = 'pink'
                     store.update(pony, {}, function ()
                     {
+                        ok(pony.is_stored, "Instance marked stored after update")
+                        ok(!pony.is_dirty, "Instance is not marked dirty after update")
                         store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony)
                         {
                             equal(pony.color, 'pink', 'Updated instance')
@@ -384,6 +452,7 @@ asyncTest('Rest model storage', function ()
                 {
                     store.delete(pony, {}, function ()
                     {
+                        ok(pony.is_deleted, "Instance marked deleted after deleting")
                         store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony, error)
                         {
                             equal(pony, null, "Deleted an instance")
@@ -392,8 +461,8 @@ asyncTest('Rest model storage', function ()
                 })
             }
         ]
-    
-    expect(tests.length)
+        
+    expect(10)
     
     store.clear(Pony, {}, function ()
     {
@@ -403,7 +472,7 @@ asyncTest('Rest model storage', function ()
 
 module('application')
 
-test('Create an app', function ()
+test('Sanity', function ()
 {
     var app = new dmf.Application()
     
@@ -411,4 +480,29 @@ test('Create an app', function ()
     ok(typeof app.models != 'undefined', "Has models")
     ok(typeof app.views != 'undefined', "Has views")
     ok(typeof app.controllers != 'undefined', "Has controllers")
+})
+
+test('Models in app context', function ()
+{
+    var store = new dmf.store.LocalStore(),
+        app = new dmf.Application({
+            models: {
+                default_store: store
+            }
+        })
+    
+    var Pony = app.models.create(
+        'Pony',
+        {
+            name: null,
+            color: null,
+            cutie_mark: null
+        },
+        {
+            plural_name: 'Ponies'
+        }
+    )
+    
+    equal(app.models.Pony, Pony, "Model added to app object on creation")
+    equal(Pony.meta.store, store, "Default app store assigned to model")
 })

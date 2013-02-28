@@ -12,7 +12,9 @@
         dmf.Application = function (options)
         {
             this.options = {
-                default_store: null
+                models: {
+                    default_store: null
+                }
             }
             
             if (options)
@@ -21,13 +23,12 @@
                 {
                     if (this.options[n])
                     {
-                        
-                        Object.keys(options[n], function (m)
+                        Object.keys(options[n]).forEach(function (m)
                         {
                             this.options[n][m] = options[n][m]
                         }.bind(this))
                     }
-                })
+                }.bind(this))
             }
             
             this.models =
@@ -40,9 +41,14 @@
                     }
                     
                     var model = dmf.model.create(name, schema, meta)
-                    
                     this.models[name] = model
                     
+                    if (!model.meta.store)
+                    {
+                        model.meta.store = this.options.models.default_store
+                    }
+                    
+                    return model
                 }.bind(this)
             }
             
@@ -62,13 +68,22 @@
         dmf.model = {}
         dmf.model.Model = 
         {
-            init: function (fields)
+            /* 
+             * Create a new model specifying it's fields with the `fields` argument.
+             * 
+             * By default, models are initialized with a state marking them as new (i.e., not stored).
+             * To mark a model as stored and up to date, pass true for `is_stored`
+             */
+            init: function (fields, is_stored)
             {
                 dmf.EventHub.add_to(this)
                 this._fields = fields || {}
+                this._is_stored = is_stored
+                this._is_dirty = !is_stored
+                this._is_deleted = false
                 
                 var me = this
-                Object.keys(this._schema).forEach(function (n)
+                Object.keys(this.model.schema).forEach(function (n)
                 {
                     Object.defineProperty(me, n, 
                     {
@@ -78,7 +93,37 @@
                     })
                 })
                 
-                this.notify_all()
+                this._notify_all()
+                this.model.cache.add(this)
+            },
+            
+            get is_stored()
+            {
+                return this._is_stored
+            },
+            
+            mark_stored: function ()
+            {
+                this._is_stored = true
+                this._is_dirty = false
+            },
+            
+            get is_dirty()
+            {
+                return this._is_dirty
+            },
+            
+            get is_deleted()
+            {
+                return this._is_deleted
+            },
+            
+            mark_deleted: function ()
+            {
+                this._is_deleted = true
+                this._is_dirty = false
+                this._is_stored = false
+                this.fire('delete', this)
             },
             
             get: function (name)
@@ -88,19 +133,42 @@
             
             set: function (name, value)
             {
-                if (this._schema.hasOwnProperty(name))
+                if (this.model.schema.hasOwnProperty(name))
                 {
                     if (value != this._fields[name])
                     {
-                        this._dirty = true
+                        this._is_dirty = true
+                        
+                        if (name == this.model.meta.primary_key &&
+                            this._fields[name])
+                        {
+                            this.model.cache.remove(this)
+                        }
+                        
+                        this._fields[name] = value
+                        
+                        if (name == this.model.meta.primary_key)
+                        {
+                            this.model.cache.add(this)
+                        }
+                        
+                        this._fire_change(name)
                     }
-                    
-                    this._fields[name] = value
-                    this.fire_change(name)
                 }
                 else
                 {
                     throw new Error("Cannot set unknown property '"+name+"'")
+                }
+            },
+            
+            update: function (fields)
+            {
+                for (var n in fields)
+                {
+                    if (this.model.schema[n])
+                    {
+                        this[n] = fields[n]
+                    }
                 }
             },
             
@@ -111,7 +179,7 @@
             
             validate: function (done)
             {
-                if (this._meta.validates)
+                if (this.model.meta.validates)
                 {
                     var invalid = []
                     
@@ -135,15 +203,15 @@
             
             is_valid: function (field_name)
             {
-                if (!this._schema.hasOwnProperty(field_name))
+                if (!this.model.schema.hasOwnProperty(field_name))
                 {
                     throw new Error("'"+field_name+"' is unknown.")
                 }
                 
-                if (this._schema[field_name] &&
-                    this._schema[field_name] instanceof Function)
+                if (this.model.schema[field_name] &&
+                    this.model.schema[field_name] instanceof Function)
                 {
-                    return !(!this._schema[field_name](this._fields[field_name]))
+                    return !(!this.model.schema[field_name](this._fields[field_name]))
                 }
                 else
                 {
@@ -151,20 +219,63 @@
                 }
             },
             
-            notify_all: function ()
+            save: function ()
+            {
+                if (!this.model.meta.store)
+                {
+                    throw new Error("Attempting to save instance without a store.")
+                }
+                
+                var args = this._get_store_call_args(arguments)
+                
+                if (this._is_stored)
+                {
+                    if (this._is_dirty)
+                    {
+                        
+                    }
+                }
+                else
+                {
+                    this.model.meta.store.create()
+                }
+            },
+            
+            _get_store_call_args: function (args)
+            {
+                var args = Array.prototype.slice(args, 0),
+                    query, callback
+                
+                if (args.length == 1)
+                {
+                    callback = args[0]
+                }
+                else if (args.length == 2)
+                {
+                    query = args[0]
+                    callback = args[1]
+                }
+                
+                return {
+                    query: query,
+                    callback: callback
+                }
+            },
+            
+            _notify_all: function ()
             {
                 Object.keys(this._fields).forEach(function (n)
                 {
-                    this.fire_change(n)
+                    this._fire_change(n)
                 }.bind(this))
             },
             
-            fire_change: function (field_name)
+            _fire_change: function (field_name)
             {
                 this.fire('change', this, field_name)
                 this.fire('change.'+field_name, this)
                 
-                if (this._meta.validates)
+                if (this.model.meta.validates)
                 {
                     if (this.is_valid(field_name))
                     {
@@ -180,12 +291,115 @@
             }
         }
         
+        dmf.model.ModelCache = function ()
+        {
+            this._instance_list = []
+            this._instance_map = []
+        }
+        dmf.model.ModelCache.prototype = 
+        {
+            get all()
+            {
+                return this._instance_list
+            },
+            
+            get: function (id)
+            {
+                return this._instance_map[id]
+            },
+            
+            add: function (inst)
+            {
+                var pk = inst[inst.model.meta.primary_key]
+                
+                if (pk && !this._instance_map[pk])
+                {
+                    this._instance_map[pk] = inst
+                    this._instance_list.push(inst)
+                }
+            },
+            
+            remove: function (inst)
+            {
+                var pk = inst[inst.model.meta.primary_key]
+                
+                if (this._instance_map[pk])
+                {
+                    // Make sure we are using the same object
+                    // when looking in the instance list
+                    var inst = this._instance_map[pk]
+                    
+                    var i = this._instance_list.indexOf(inst)
+                    
+                    this._instance_list.splice(i, 1)
+                    delete this._instance_map[pk]
+                }
+            },
+            
+            save_to_store: function (store, callback)
+            {
+                var callback = callback || function () {},
+                    errors = [],
+                    instances = this._instance_list.filter(function (inst)
+                    {
+                        return inst.is_dirty
+                    }),
+                    total_calls = models.length,
+                    calls_made = 0,
+                    next = function (result, error)
+                    {
+                        calls_made++
+                        
+                        if (calls_made == total_calls)
+                        {
+                            callback(errors)
+                        }
+                    }
+                
+                instances.forEach(function (inst)
+                {
+                    if (inst.is_stored)
+                    {
+                        store.update(inst, {}, next)
+                    }
+                    else
+                    {
+                        store.create(inst, {}, next)
+                    }
+                })
+            },
+            
+            clear: function (should_mark_instances_deleted)
+            {
+                if (should_mark_instances_deleted)
+                {
+                    this._instance_list.forEach(function (inst)
+                    {
+                        inst.mark_deleted()
+                    })
+                }
+                
+                this._instance_list = []
+                this._instance_map = {}
+            }
+        }
+        
         dmf.model.create = function (schema, meta)
         {
-            var model = function (data) { this.init(data) }
-            model.prototype = dmf.model.Model
-            model.schema = model.prototype._schema = schema
-            model.meta = model.prototype._meta = {
+            var model = function (data, is_clean) { this.init(data, is_clean) }
+            
+            for (var n in dmf.model.ModelMeta)
+            {
+                if (dmf.model.ModelMeta.hasOwnProperty(n) && 
+                    dmf.model.ModelMeta[n] && 
+                    dmf.model.ModelMeta[n].constructor == Function)
+                {
+                    model[n] = dmf.model.ModelMeta[n]
+                }
+            }
+            
+            model.schema = schema
+            model.meta = {
                 name: null,
                 primary_key: 'id',
                 validates: true,
@@ -199,6 +413,21 @@
                     model.meta[k] = meta[k]
                 })
             }
+            
+            model.cache = new dmf.model.ModelCache()
+            
+            model.save = function (callback)
+            {
+                if (!this.meta.store)
+                {
+                    throw new Error("Attempt to save a model without a store.")
+                }
+                
+                this.cache.save_to_store(this.meta.store, callback)
+            }
+            
+            model.prototype = dmf.model.Model
+            model.prototype.model = model
             
             return model
         }
@@ -261,6 +490,7 @@
                 
                 localStorage[key] = data
                 
+                inst.mark_stored()
                 callback(inst, null)
             },
             
@@ -270,11 +500,15 @@
                     callback = callback || function () {}
                     
                 delete localStorage[key]
+                inst.mark_deleted()
+                inst.model.cache.remove(inst)
                 callback(null)
             },
             
             clear: function (model, query, callback)
             {
+                model.cache.clear(true)
+                
                 this._get_model_keys(model).forEach(function (k)
                 {
                     delete localStorage[k]
@@ -285,7 +519,7 @@
             
             _get_instance_key: function (inst)
             {
-                var id = inst[inst._meta.primary_key]
+                var id = inst[inst.model.meta.primary_key]
                 
                 if (!id)
                 {
@@ -325,7 +559,7 @@
             
             _get_model_prefix: function (model)
             {
-                var meta = model.meta || model._meta
+                var meta = model.meta || model.model.meta
                 
                 if (!meta.name)
                 {
@@ -342,7 +576,7 @@
                 if (data)
                 {
                     var fields = JSON.parse(data)
-                    return new model(fields)
+                    return new model(fields, true)
                 }
             }
         }
@@ -420,7 +654,7 @@
                     
                     callback(result.map(function (fields)
                     {
-                        return new model(fields)
+                        return new model(fields, true)
                     }), null)
                 })
             },
@@ -436,7 +670,7 @@
                         return
                     }
                     
-                    callback(new model(fields))
+                    callback(new model(fields, true))
                 })
             },
             
@@ -451,7 +685,9 @@
                     }
                     else
                     {
-                        callback(new inst.constructor(result), null)
+                        inst.update(result)
+                        inst.mark_stored()
+                        callback(inst, null)
                     }
                 })
             },
@@ -467,7 +703,9 @@
                     }
                     else
                     {
-                        callback(new inst.constructor(result), null)
+                        inst.update(result)
+                        inst.mark_stored()
+                        callback(inst, null)
                     }
                 })
             },
@@ -477,12 +715,16 @@
                 var callback = callback || function () {}
                 this._request('DELETE', this._get_inst_path(inst), query, null, function (result, error)
                 {
+                    inst.mark_deleted()
+                    inst.model.cache.remove(inst)
                     callback(null, error)
                 })
             },
             
             clear: function (model, query, callback)
             {
+                model.cache.clear(true)
+                
                 var callback = callback || function () {}
                 this._request('DELETE', this._get_model_path(model), query, null, function (result, error)
                 {
@@ -492,12 +734,12 @@
             
             _get_inst_path: function (inst)
             {
-                return this._get_model_path(inst) + inst[inst._meta.primary_key] 
+                return this._get_model_path(inst) + inst[inst.model.meta.primary_key] 
             },
             
             _get_model_path: function (model)
             {
-                var meta = model.meta || model._meta
+                var meta = model.meta || model.model.meta
                 
                 if (!meta.name)
                 {
@@ -592,7 +834,7 @@
             }
         }
         
-        /* An event notification center with simple, one-off and deferred events. */
+        /* An event notification center */
         dmf.EventHub = function ()
         {
             this._listeners = {}

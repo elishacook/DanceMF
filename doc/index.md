@@ -18,4 +18,4 @@ It doesn't have...
 * layers and layers of abstraction
 * a runny nose
 
-Yes, DanceMF is fit and healthy and young and, rightly or wrongly, doesn't think about old people like IE8. If you are using DanceMF you are targeting environments that support ECMAScript 5 and HTML 5.
+Yes, DanceMF is fit and healthy and young and, rightly or wrongly, doesn't think about old people like IE8. If you are using DanceMF you are targeting modern, standards-compliant environments only.
