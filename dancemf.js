@@ -243,7 +243,17 @@
                 callback(inst, null)
             },
             
-            save: function (inst, query, callback)
+            create: function (inst, query, callback)
+            {
+                this._save(inst, query, callback)
+            },
+            
+            update: function (inst, query, callback)
+            {
+                this._save(inst, query, callback)
+            },
+            
+            _save: function (inst, query, callback)
             {
                 var key = this._get_instance_key(inst),
                     data = JSON.stringify(inst.get_fields()),
@@ -261,6 +271,16 @@
                     
                 delete localStorage[key]
                 callback(null)
+            },
+            
+            clear: function (model, query, callback)
+            {
+                this._get_model_keys(model).forEach(function (k)
+                {
+                    delete localStorage[k]
+                })
+                
+                callback()
             },
             
             _get_instance_key: function (inst)
@@ -384,17 +404,18 @@
             get: function (model, query, callback)
             {
                 var callback = callback || function () {}
-                
                 this._request('GET', this._get_model_path(model), query, null, function (result, error)
                 {
                     if (error)
                     {
                         callback(null, error)
+                        return
                     }
                     
                     if (result.constructor != Array)
                     {
                         callback(null, new Error("Invalid response from server. Expected an [obj1, obj2, ...], got '"+result+"'"))
+                        return
                     }
                     
                     callback(result.map(function (fields)
@@ -406,17 +427,72 @@
             
             get_by_id: function (model, id, query, callback)
             {
-                this._request('GET', this._get_model_path(model) + id, query, null, callback)
+                var callback = callback || function () {}
+                this._request('GET', this._get_model_path(model) + id, query, null, function (fields, error)
+                {
+                    if (error)
+                    {
+                        callback(null, error)
+                        return
+                    }
+                    
+                    callback(new model(fields))
+                })
             },
             
-            save: function (inst, query, callback)
+            create: function (inst, query, callback)
             {
-                throw new Error('Not implemented')
+                var callback = callback || function () {}
+                this._request('POST', this._get_model_path(inst), query, inst.get_fields(), function (result, error)
+                {
+                    if (error)
+                    {
+                        callback(null, error)
+                    }
+                    else
+                    {
+                        callback(new inst.constructor(result), null)
+                    }
+                })
+            },
+            
+            update: function (inst, query, callback)
+            {
+                var callback = callback || function () {}
+                this._request('PUT', this._get_inst_path(inst), query, inst.get_fields(), function (result, error)
+                {
+                    if (error)
+                    {
+                        callback(null, error)
+                    }
+                    else
+                    {
+                        callback(new inst.constructor(result), null)
+                    }
+                })
             },
             
             delete: function (inst, query, callback)
             {
-                throw new Error('Not implemented')
+                var callback = callback || function () {}
+                this._request('DELETE', this._get_inst_path(inst), query, null, function (result, error)
+                {
+                    callback(null, error)
+                })
+            },
+            
+            clear: function (model, query, callback)
+            {
+                var callback = callback || function () {}
+                this._request('DELETE', this._get_model_path(model), query, null, function (result, error)
+                {
+                    callback(null, error)
+                })
+            },
+            
+            _get_inst_path: function (inst)
+            {
+                return this._get_model_path(inst) + inst[inst._meta.primary_key] 
             },
             
             _get_model_path: function (model)
@@ -435,7 +511,8 @@
             
             _request: function (method, path, query, data, callback)
             {
-                var req = new XMLHttpRequest()
+                var callback = callback || function () {},
+                    req = new XMLHttpRequest()
                 req.onabort = function ()
                 {
                     callback(null, new Error('Request aborted.'))
@@ -448,7 +525,12 @@
                 {
                     if (this.status != 200)
                     {
-                        var error = new Error(this.responseText || "An error occurred")
+                        var error = new Error("An error occurred")
+                        try
+                        {
+                            error.details = JSON.parse(req.responseText)
+                        }
+                        catch (e) {}
                         error.status = this.status
                         callback(null, error)
                     }
@@ -493,14 +575,15 @@
                 
                 if (data)
                 {
-                    var form_data = new FormData()
+                    var parts = []
                     
                     Object.keys(data).forEach(function (k)
                     {
-                        form_data.append(k, data[k])
+                        parts.push(k + '=' + encodeURIComponent(data[k]))
                     })
                     
-                    req.send(form_data)
+                    req.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded')
+                    req.send(parts.join('&'))
                 }
                 else
                 {

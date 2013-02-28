@@ -9,21 +9,19 @@ import threading
 import time
 import socket
 
-ponies = {}
-
 class TestError(Exception):
     
     def __init__(self, status, message=''):
         super(TestError, self).__init__(message)
         self.status = status
-        
+
+ponies = {}
 
 class TestRESTApp(object):
     
     routes = [
         (re.compile('^/ponies/$'), 'all'),
-        (re.compile('^/ponies/([a-zA-Z0-9\s]+)$'), 'one'),
-        (re.compile('^/clear$'), 'clear')
+        (re.compile('^/ponies/([a-zA-Z0-9%\d\s]+)$'), 'one')
     ]
     
     def __call__(self, environ, start_response):
@@ -57,10 +55,10 @@ class TestRESTApp(object):
             return [data]
             
     def respond(self, status, headers=[]):
-        headers += [
+        headers = headers + [
             ('Access-Control-Allow-Origin', '*'),
             ('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE'),
-            ('Access-Control-Allow-Headers', 'origin, accepts')
+            ('Access-Control-Allow-Headers', 'accepts, origin, content-type')
         ]
         self.start_response(status, headers)
     
@@ -90,6 +88,15 @@ class TestRESTApp(object):
         print "PONY UPDATED: ", pony
         return pony
         
+    def do_DELETE_one(self, id):
+        if id in ponies:
+            ponies.pop(id)
+        
+    def do_DELETE_all(self):
+        print 'Clearing ponies...'
+        global ponies
+        ponies = {}
+        
     def get_pony_from_request(self):
         fields = FieldStorage(
             fp=self.environ['wsgi.input'],
@@ -104,11 +111,6 @@ class TestRESTApp(object):
             pony[k] = fields[k].value
         
         return pony
-        
-    def do_GET_clear(self):
-        print 'Clearing ponies...'
-        global ponies
-        ponies = {}
         
 
 def start_rest_server():

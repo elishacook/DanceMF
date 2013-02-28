@@ -207,9 +207,7 @@ test('Property validation', function ()
 
 test('Local model storage', function ()
 {
-    localStorage.clear()
-    
-    var store = new dmf.store.LocalStore()
+    var store = new dmf.store.LocalStore(),
         Pony = dmf.model.create(
             {
                 name: null,
@@ -222,69 +220,74 @@ test('Local model storage', function ()
             }
         )
     
-    store.get(Pony, {}, function (ponies, error)
+    expect(6)
+    
+    store.clear(Pony, {}, function ()
     {
-        equal(ponies.length, 0, "Local storage starts out empty")
-    })
-    
-    var ponies = [
+        store.get(Pony, {}, function (ponies, error)
         {
-            name: 'Twilight Sparkle',
-            color: 'purple',
-            cutie_mark: 'star'
-        },
+            equal(ponies.length, 0, "Local storage starts out empty")
+        })
+        
+        var ponies = [
+            {
+                name: 'Twilight Sparkle',
+                color: 'purple',
+                cutie_mark: 'star'
+            },
+            {
+                name: 'Pinkie Pie',
+                color: 'pink',
+                cutie_mark: 'balloons'
+            },
+            {
+                name: 'Rarity',
+                color: 'white',
+                cutie_mark: 'diamonds'
+            },
+            {
+                name: 'Applejack',
+                color: 'orange',
+                cutie_mark: 'apples'
+            },
+            {
+                name: 'Fluttershy',
+                color: 'yellow',
+                cutie_mark: 'butterflies'
+            },
+            {
+                name: 'Rainbow Dash',
+                color: 'blue',
+                cutie_mark: 'rainbow bolt'
+            }
+        ].map(function (fields) { var p = new Pony(fields); store.create(p) })
+        
+        store.get(Pony, {}, function (all_ponies)
         {
-            name: 'Pinkie Pie',
-            color: 'pink',
-            cutie_mark: 'balloons'
-        },
+            equal(all_ponies.length, ponies.length, "Can get all the saved instances")
+        })
+        
+        store.get_by_id(Pony, "Fahrvergnügen", {}, function (pony)
         {
-            name: 'Rarity',
-            color: 'white',
-            cutie_mark: 'diamonds'
-        },
-        {
-            name: 'Applejack',
-            color: 'orange',
-            cutie_mark: 'apples'
-        },
-        {
-            name: 'Fluttershy',
-            color: 'yellow',
-            cutie_mark: 'butterflies'
-        },
-        {
-            name: 'Rainbow Dash',
-            color: 'blue',
-            cutie_mark: 'rainbow bolt'
-        }
-    ].map(function (fields) { var p = new Pony(fields); store.save(p) })
-    
-    store.get(Pony, {}, function (all_ponies)
-    {
-        equal(all_ponies.length, ponies.length, "Can get all the saved instances")
-    })
-    
-    store.get_by_id(Pony, "Fahrvergnügen", {}, function (pony)
-    {
-        equal(pony, null, "Nothing returned for nonexistent key")
-    })
-    
-    var rainbow = null
-    store.get_by_id(Pony, "Rainbow Dash", {}, function (pony)
-    {
-        equal(pony.name, "Rainbow Dash", "Can retrieve instance by primary key")
-        rainbow = pony
-    })
-    
-    equal(rainbow.color, "blue", "Fields came through serialization OK")
-    
-    rainbow.color = 'light blue'
-    store.save(rainbow, function ()
-    {
+            equal(pony, null, "Nothing returned for nonexistent key")
+        })
+        
+        var rainbow = null
         store.get_by_id(Pony, "Rainbow Dash", {}, function (pony)
         {
-            equal(pony.color, "light blue", "Overwrote existing model")
+            equal(pony.name, "Rainbow Dash", "Can retrieve instance by primary key")
+            rainbow = pony
+        })
+        
+        equal(rainbow.color, "blue", "Fields came through serialization OK")
+        
+        rainbow.color = 'light blue'
+        store.update(rainbow, {}, function ()
+        {
+            store.get_by_id(Pony, "Rainbow Dash", {}, function (pony)
+            {
+                equal(pony.color, "light blue", "Overwrote existing model")
+            })
         })
     })
 })
@@ -294,8 +297,6 @@ asyncTest('Rest model storage', function ()
     var store = new dmf.store.RESTStore({
         base_url: 'http://localhost:3002/'
     })
-    
-    store._request('GET', 'clear')
     
     var Pony = dmf.model.create(
         {
@@ -313,14 +314,13 @@ asyncTest('Rest model storage', function ()
     var i=0,
         next = function ()
         {
-            if (i == test.length - 1)
+            tests[i]()
+            
+            i++
+            
+            if (i == tests.length)
             {
                 start()
-            }
-            else
-            {
-                tests[i]()
-                i++
             }
         },
         tests = [
@@ -332,7 +332,7 @@ asyncTest('Rest model storage', function ()
                     cutie_mark: 'star'
                 })
                 
-                store.save(pony, {}, function (pony, error)
+                store.create(pony, {}, function (pony, error)
                 {
                     equal(pony.name, "Twilight Sparkle", "Saved an instance")
                     next()
@@ -354,7 +354,7 @@ asyncTest('Rest model storage', function ()
                     cutie_mark: 'balloons'
                 })
                 
-                store.save(pony, {}, function ()
+                store.create(pony, {}, function ()
                 {
                     store.get(Pony, {}, function (ponies)
                     {
@@ -368,7 +368,7 @@ asyncTest('Rest model storage', function ()
                 store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony)
                 {
                     pony.color = 'pink'
-                    store.save(pony, {}, function ()
+                    store.update(pony, {}, function ()
                     {
                         store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony)
                         {
@@ -382,9 +382,9 @@ asyncTest('Rest model storage', function ()
             {
                 store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony)
                 {
-                    store.delete(pony, function ()
+                    store.delete(pony, {}, function ()
                     {
-                        store.get_by_id(Pony, 'Pinkie Pie', function (pony, error)
+                        store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony, error)
                         {
                             equal(pony, null, "Deleted an instance")
                         })
@@ -392,7 +392,13 @@ asyncTest('Rest model storage', function ()
                 })
             }
         ]
-    next()
+    
+    expect(tests.length)
+    
+    store.clear(Pony, {}, function ()
+    {
+        next()
+    })
 })
 
 module('application')
