@@ -450,7 +450,7 @@ asyncTest('Rest model storage', function ()
             {
                 store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony)
                 {
-                    store.delete(pony, {}, function ()
+                    store.remove(pony, {}, function ()
                     {
                         ok(pony.is_deleted, "Instance marked deleted after deleting")
                         store.get_by_id(Pony, 'Pinkie Pie', {}, function (pony, error)
@@ -472,7 +472,7 @@ asyncTest('Rest model storage', function ()
 
 test("Model convenience functions", function ()
 {
-    expect(2)
+    expect(4)
     
     var Pony = dmf.model.create(
         {
@@ -498,7 +498,7 @@ test("Model convenience functions", function ()
     }
     catch (e)
     {
-        equal(e.message, "Attempting to save instance without a store.")
+        equal(e.message, "Attempting to save an instance without a store.", "Can't save without a store")
     }
     
     Pony.meta.store = new dmf.store.LocalStore()

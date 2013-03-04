@@ -6,6 +6,44 @@
             version: '0.1'
         }
         
+        /**
+         * Turn an argument list and a spec into an options map.
+         *
+         * args - a list of positional arguments
+         * spec - a map of name -> constructor, specified in the order expected
+         * 
+         * Example:
+         * 
+         *     get_optional_args(['Skidoo', callbackfn], { foo: String, bar: Function })
+         *     > { foo: 'Skidoo', bar: callbackfn }
+         * 
+         * Or
+         *     get_optional_args([callbackfn], { foo: String, bar: Function })
+         *     > { foo: null, bar: callbackfn }
+         */
+        var get_optional_args = function (args, spec)
+        {
+            var options = {},
+                names = Object.keys(spec),
+                constructors = names.map(function (k) { return spec[k] }),
+                index = 0
+            
+            for (var i=0; i<names.length; i++)
+            {
+                if (args[index] && args[index].constructor == spec[names[i]])
+                {
+                    options[names[i]] = args[index]
+                    index++
+                }
+                else
+                {
+                    options[names[i]] = null
+                }
+            }
+            
+            return options
+        }
+        
         /* A central location for app configuration and management */
         
         dmf.Application = function (options)
@@ -223,7 +261,7 @@
             {
                 if (!this.model.meta.store)
                 {
-                    throw new Error("Attempting to save instance without a store.")
+                    throw new Error("Attempting to save an instance without a store.")
                 }
                 
                 var args = this._get_store_call_args(arguments)
@@ -245,38 +283,45 @@
                 }
             },
             
+            remove: function ()
+            {
+                if (!this.model.meta.store)
+                {
+                    throw new Error("Attempting to remove an instance without a store.")
+                }
+                
+                var args = this._get_store_call_args(arguments)
+                
+                if (this._is_stored)
+                {
+                    this.model.meta.store.remove(this, args.query, args.callback)
+                }
+                else
+                {
+                    this.model.cache.remove(this)
+                    this.mark_deleted()
+                    
+                    if (args.callback)
+                    {
+                        args.callback(null)
+                    }
+                }
+            },
+            
             _get_store_call_args: function (args)
             {
-                var args = Array.prototype.slice.call(args, 0),
-                    query, callback
+                var args = get_optional_args(args, { query:Object, callback:Function }),
+                    callback = args.callback
                 
-                if (args.length == 1)
+                args.callback = function (inst, error)
                 {
-                    if (args[0].constructor == Function)
+                    if (callback)
                     {
-                        callback = args[0]
+                        callback(error)
                     }
-                    else
-                    {
-                        query = args[0]
-                    }
-                }
-                else if (args.length == 2)
-                {
-                    query = args[0]
-                    callback = args[1]
                 }
                 
-                return {
-                    query: query,
-                    callback: function (inst, error)
-                    {
-                        if (callback)
-                        {
-                            callback(error)
-                        }
-                    }
-                }
+                return args
             },
             
             _notify_all: function ()
@@ -428,32 +473,20 @@
                     throw new Error("Attempting to get from a remote without a store.")
                 }
                 
-                var id = arguments[0],
-                    query, callback
+                var args = get_optional_args(arguments, {
+                    id:String,
+                    query:Object,
+                    callback:Function
+                })
                 
-                if (!id)
+                if (args.id)
                 {
-                    throw new Error("An ID must be provided.")
+                    this._model.meta.store.get_by_id(this._model, args.id, args.query, args.callback)
                 }
-                
-                if (arguments.length > 2)
+                else
                 {
-                    query = arguments[1]
-                    callback = arguments[2]
+                    this._model.meta.store.get(this._model, args.query, args.callback)
                 }
-                else if (arguments.length > 1)
-                {
-                    if (arguments[1].constructor == Function)
-                    {
-                        callback = arguments[1]
-                    }
-                    else
-                    {
-                        query = arguments[1]
-                    }
-                }
-                
-                this._model.meta.store.get_by_id(this._model, id, query, callback)
             }
         }
         
@@ -568,7 +601,7 @@
                 callback(inst, null)
             },
             
-            delete: function (inst, query, callback)
+            remove: function (inst, query, callback)
             {
                 var key = this._get_instance_key(inst),
                     callback = callback || function () {}
@@ -784,7 +817,7 @@
                 })
             },
             
-            delete: function (inst, query, callback)
+            remove: function (inst, query, callback)
             {
                 var callback = callback || function () {}
                 this._request('DELETE', this._get_inst_path(inst), query, null, function (result, error)
@@ -875,9 +908,9 @@
                 
                 if (query)
                 {
-                    var qs = Object.keys(query).map(function ()
+                    var qs = Object.keys(query).map(function (k)
                     {
-                        
+                        return k + encodeURIComponent(query[k])
                     }).join('&')
                     
                     if (qs)
