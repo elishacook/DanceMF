@@ -6,7 +6,6 @@
             version: '0.1'
         }
         
-        
         /* A central location for app configuration and management */
         
         dmf.Application = function (options)
@@ -33,6 +32,7 @@
             
             this.models =
             {
+                store: this.options.models.default_store,
                 create: function (name, schema, meta)
                 {
                     if (this.models[name])
@@ -232,23 +232,34 @@
                 {
                     if (this._is_dirty)
                     {
-                        
+                        this.model.meta.store.update(this, args.query, args.callback)
+                    }
+                    else
+                    {
+                        args.callback(null)
                     }
                 }
                 else
                 {
-                    this.model.meta.store.create()
+                    this.model.meta.store.create(this, args.query, args.callback)
                 }
             },
             
             _get_store_call_args: function (args)
             {
-                var args = Array.prototype.slice(args, 0),
+                var args = Array.prototype.slice.call(args, 0),
                     query, callback
                 
                 if (args.length == 1)
                 {
-                    callback = args[0]
+                    if (args[0].constructor == Function)
+                    {
+                        callback = args[0]
+                    }
+                    else
+                    {
+                        query = args[0]
+                    }
                 }
                 else if (args.length == 2)
                 {
@@ -258,7 +269,13 @@
                 
                 return {
                     query: query,
-                    callback: callback
+                    callback: function (inst, error)
+                    {
+                        if (callback)
+                        {
+                            callback(error)
+                        }
+                    }
                 }
             },
             
@@ -291,8 +308,9 @@
             }
         }
         
-        dmf.model.ModelCache = function ()
+        dmf.model.ModelCache = function (model)
         {
+            this._model = model
             this._instance_list = []
             this._instance_map = []
         }
@@ -306,6 +324,18 @@
             get: function (id)
             {
                 return this._instance_map[id]
+            },
+            
+            get_or_create: function (fields, is_stored)
+            {
+                var inst = this._instance_map[fields[this._model.meta.primary_key]]
+                
+                if (!inst)
+                {
+                    inst = new this._model(fields, is_stored)
+                }
+                
+                return inst
             },
             
             add: function (inst)
@@ -384,6 +414,49 @@
             }
         }
         
+        /* A thin wrapper around a model's store */
+        dmf.model.Remote = function (model)
+        {
+            this._model = model
+        }
+        dmf.model.Remote.prototype = 
+        {
+            get: function ()
+            {
+                if (!this._model.meta.store)
+                {
+                    throw new Error("Attempting to get from a remote without a store.")
+                }
+                
+                var id = arguments[0],
+                    query, callback
+                
+                if (!id)
+                {
+                    throw new Error("An ID must be provided.")
+                }
+                
+                if (arguments.length > 2)
+                {
+                    query = arguments[1]
+                    callback = arguments[2]
+                }
+                else if (arguments.length > 1)
+                {
+                    if (arguments[1].constructor == Function)
+                    {
+                        callback = arguments[1]
+                    }
+                    else
+                    {
+                        query = arguments[1]
+                    }
+                }
+                
+                this._model.meta.store.get_by_id(this._model, id, query, callback)
+            }
+        }
+        
         dmf.model.create = function (schema, meta)
         {
             var model = function (data, is_clean) { this.init(data, is_clean) }
@@ -414,7 +487,8 @@
                 })
             }
             
-            model.cache = new dmf.model.ModelCache()
+            model.cache = new dmf.model.ModelCache(model)
+            model.remote = new dmf.model.Remote(model)
             
             model.save = function (callback)
             {
@@ -576,7 +650,7 @@
                 if (data)
                 {
                     var fields = JSON.parse(data)
-                    return new model(fields, true)
+                    return model.cache.get_or_create(fields, true)
                 }
             }
         }
@@ -654,7 +728,7 @@
                     
                     callback(result.map(function (fields)
                     {
-                        return new model(fields, true)
+                        return model.cache.get_or_create(fields, true)
                     }), null)
                 })
             },
@@ -670,7 +744,7 @@
                         return
                     }
                     
-                    callback(new model(fields, true))
+                    callback(model.cache.get_or_create(fields, true))
                 })
             },
             

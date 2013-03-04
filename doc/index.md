@@ -16,6 +16,6 @@ It doesn't have...
 * any templates
 * support for older browsers
 * layers and layers of abstraction
-* a runny nose
+* a bad back
 
-Yes, DanceMF is fit and healthy and young and, rightly or wrongly, doesn't think about old people like IE8. If you are using DanceMF you are targeting modern, standards-compliant environments only.
+This is a project that is just getting underway and in active development. There is no friendly documentation but there are lots of tests that can give you an idea of where this thing is going.

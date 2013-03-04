@@ -470,6 +470,58 @@ asyncTest('Rest model storage', function ()
     })
 })
 
+test("Model convenience functions", function ()
+{
+    expect(2)
+    
+    var Pony = dmf.model.create(
+        {
+            name: null,
+            color: null,
+            cutie_mark: null
+        },
+        {
+            name: 'Pony',
+            primary_key: 'name'
+        }
+    )
+    
+    var pony = new Pony({
+        name: "Big McIntosh",
+        color: "orange",
+        cutie_mark: "apple"
+    })
+    
+    try
+    {
+        pony.save()
+    }
+    catch (e)
+    {
+        equal(e.message, "Attempting to save instance without a store.")
+    }
+    
+    Pony.meta.store = new dmf.store.LocalStore()
+    
+    pony.save(function (error)
+    {
+        Pony.remote.get("Big McIntosh", function (returned_pony, error)
+        {
+            equal(returned_pony, pony, "Saved and retrieved an instance through model")
+            
+            pony.remove(function ()
+            {
+                ok(!Pony.cache.get("Big McIntosh"), "Instance removed from cache")
+                
+                Pony.remote.get("Big McIntosh", function (returned_pony, error)
+                {
+                    equal(returned_pony, null, "Instance removed from storage")
+                })
+            })
+        })
+    })
+})
+
 module('application')
 
 test('Sanity', function ()
