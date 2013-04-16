@@ -522,6 +522,59 @@ test("Model convenience functions", function ()
     })
 })
 
+module('views')
+
+test('singleton views', function ()
+{
+    expect(4)
+    var manager = new dmf.ViewManager(document.querySelector('#qunit-fixture'))
+    ok(manager.helloSingleView, "Created singleton view")
+    manager.helloSingleView.extend({
+        init: function ()
+        {
+            ok(true, "Called singleton initializer")
+        },
+        foo: function ()
+        {
+            return 23
+        }
+    })
+    var called_init_twice = false
+    manager.helloSingleView.extend({
+        init: function ()
+        {
+            called_init_twice = true
+        }
+    })
+    equal(called_init_twice, false, "Did not call subsequent singleton initializer")
+    equal(manager.helloSingleView.foo(), 23, "Behavior added to singleton")
+})
+
+test('template views', function ()
+{
+    expect(7)
+    var manager = new dmf.ViewManager(document.querySelector('#qunit-fixture'))
+    ok(manager.HelloView, "Manager created template view class")
+    var called_init = false
+    manager.HelloView.extend({
+        init: function ()
+        {
+            called_init = true
+        },
+        foo: function ()
+        {
+            return 23
+        }
+    })
+    equal(called_init, false, "Did not call initializer when defined")
+    var helloView = new manager.HelloView()
+    equal(called_init, true, "Called initializer when constructing new template instance")
+    equal(helloView.foo(), 23, "Behavior added to template class")
+    ok(manager.HelloView.template_element, "Template element exists")
+    notEqual(manager.HelloView.template_element, helloView.root, "Template element is different from instance root element")
+    ok(helloView.$root, "Makes a jQuery node available")
+})
+
 module('application')
 
 test('Sanity', function ()
@@ -531,7 +584,6 @@ test('Sanity', function ()
     ok(typeof app.options != 'undefined', "Has options")
     ok(typeof app.models != 'undefined', "Has models")
     ok(typeof app.views != 'undefined', "Has views")
-    ok(typeof app.controllers != 'undefined', "Has controllers")
 })
 
 test('Models in app context', function ()

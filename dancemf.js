@@ -78,7 +78,14 @@
                         throw new Error('Attempting to redfine the model "'+name+'"')
                     }
                     
-                    var model = dmf.model.create(name, schema, meta)
+                    var meta = meta || {}
+                    
+                    if (!meta.name)
+                    {
+                        meta.name = name
+                    }
+                    
+                    var model = dmf.model.create(schema, meta)
                     this.models[name] = model
                     
                     if (!model.meta.store)
@@ -90,14 +97,7 @@
                 }.bind(this)
             }
             
-            this.views = {
-                
-            }
-            
-            this.controllers = {
-                
-            }
-            
+            this.views = new dmf.ViewManager()
             this.events = new dmf.EventHub()
         }
         
@@ -745,7 +745,7 @@
             get: function (model, query, callback)
             {
                 var callback = callback || function () {}
-                this._request('GET', this._get_model_path(model), query, null, function (result, error)
+                this.request('GET', this._get_model_path(model), query, null, function (result, error)
                 {
                     if (error)
                     {
@@ -769,7 +769,7 @@
             get_by_id: function (model, id, query, callback)
             {
                 var callback = callback || function () {}
-                this._request('GET', this._get_model_path(model) + id, query, null, function (fields, error)
+                this.request('GET', this._get_model_path(model) + id, query, null, function (fields, error)
                 {
                     if (error)
                     {
@@ -784,7 +784,7 @@
             create: function (inst, query, callback)
             {
                 var callback = callback || function () {}
-                this._request('POST', this._get_model_path(inst), query, inst.get_fields(), function (result, error)
+                this.request('POST', this._get_model_path(inst), query, inst.get_fields(), function (result, error)
                 {
                     if (error)
                     {
@@ -802,7 +802,7 @@
             update: function (inst, query, callback)
             {
                 var callback = callback || function () {}
-                this._request('PUT', this._get_inst_path(inst), query, inst.get_fields(), function (result, error)
+                this.request('PUT', this._get_inst_path(inst), query, inst.get_fields(), function (result, error)
                 {
                     if (error)
                     {
@@ -820,7 +820,7 @@
             remove: function (inst, query, callback)
             {
                 var callback = callback || function () {}
-                this._request('DELETE', this._get_inst_path(inst), query, null, function (result, error)
+                this.request('DELETE', this._get_inst_path(inst), query, null, function (result, error)
                 {
                     inst.mark_deleted()
                     inst.model.cache.remove(inst)
@@ -833,32 +833,13 @@
                 model.cache.clear(true)
                 
                 var callback = callback || function () {}
-                this._request('DELETE', this._get_model_path(model), query, null, function (result, error)
+                this.request('DELETE', this._get_model_path(model), query, null, function (result, error)
                 {
                     callback(null, error)
                 })
             },
             
-            _get_inst_path: function (inst)
-            {
-                return this._get_model_path(inst) + inst[inst.model.meta.primary_key] 
-            },
-            
-            _get_model_path: function (model)
-            {
-                var meta = model.meta || model.model.meta
-                
-                if (!meta.name)
-                {
-                    throw new Error("Models without names can't use REST storage. Set a value for 'name' in your model's meta definition.")
-                }
-                
-                var name = meta.plural_name ? meta.plural_name : meta.name
-                
-                return name.toLowerCase() + '/'
-            },
-            
-            _request: function (method, path, query, data, callback)
+            request: function (method, path, query, data, callback)
             {
                 var callback = callback || function () {},
                     req = new XMLHttpRequest()
@@ -924,20 +905,61 @@
                 
                 if (data)
                 {
-                    var parts = []
+                    var data_string;
                     
-                    Object.keys(data).forEach(function (k)
+                    if (data.constructor == String)
                     {
-                        parts.push(k + '=' + encodeURIComponent(data[k]))
-                    })
+                        data_string = data;
+                    }
+                    else if (data.constructor == Array)
+                    {
+                        var parts = []
+                        data.forEach(function (n)
+                        {
+                            parts.push(n.name + '=' + encodeURIComponent(n.value))
+                        })
+                        data_string = parts.join('&')
+                    }
+                    else if (data.constructor == Object)
+                    {
+                        var parts = []
+                        Object.keys(data).forEach(function (k)
+                        {
+                            parts.push(k + '=' + encodeURIComponent(data[k]))
+                        })
+                        data_string = parts.join('&')
+                    }
+                    else
+                    {
+                        throw new Error("Unknown data format")
+                    }
                     
                     req.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded')
-                    req.send(parts.join('&'))
+                    req.send(data_string)
                 }
                 else
                 {
                     req.send()
                 }
+            },
+            
+            _get_inst_path: function (inst)
+            {
+                return this._get_model_path(inst) + inst[inst.model.meta.primary_key] 
+            },
+            
+            _get_model_path: function (model)
+            {
+                var meta = model.meta || model.model.meta
+                
+                if (!meta.name)
+                {
+                    throw new Error("Models without names can't use REST storage. Set a value for 'name' in your model's meta definition.")
+                }
+                
+                var name = meta.plural_name ? meta.plural_name : meta.name + 's'
+                
+                return name.toLowerCase() + '/'
             }
         }
         
@@ -1151,6 +1173,150 @@
                 {
                     obj[n] = obj._eventhub[n].bind(obj._eventhub)
                 }
+            }
+        }
+        
+        dmf.View = function ()
+        {
+            this.base_init()
+        }
+        dmf.View.prototype = 
+        {
+            base_init: function ()
+            {
+                if (this.template_element)
+                {
+                    this._elm = this.template_element.cloneNode(true)
+                }
+                
+                this._did_lazy_init = false
+                
+                Object.defineProperty(this, 'root',
+                {
+                    enumerable: true,
+                    get: function ()
+                    {
+                        return this._elm
+                    }.bind(this)
+                })
+                
+                Object.defineProperty(this, '$root',
+                {
+                    enumerable: true,
+                    get: function ()
+                    {
+                        if (!this._$elm && typeof jQuery != "undefined")
+                        {
+                            this._$elm = jQuery(this._elm)
+                        }
+                        
+                        return this._$elm
+                    }.bind(this)
+                })
+            },
+            
+            extend: function (obj)
+            {
+                Object.keys(obj).forEach(function (k)
+                {
+                    this[k] = obj[k].bind(this)
+                }.bind(this))
+                
+                if (!this._did_lazy_init && this.init)
+                {
+                    this._did_lazy_init = true
+                    this.init()
+                }
+            }
+        }
+        
+        dmf.ViewManager = function (root_elm)
+        {
+            if (!root_elm)
+            {
+                root_elm = document
+            }
+            
+            this._root_elm = root_elm
+            this.scan()
+        }
+        dmf.ViewManager.prototype = 
+        {
+            scan: function ()
+            {
+                this._scan_for_singletons()
+                this._scan_for_templates()
+            },
+            
+            _scan_for_singletons: function ()
+            {
+                var elements = this._root_elm.querySelectorAll('[data-view]')
+                
+                for (var i=0; i<elements.length; i++)
+                {
+                    var elm = elements[i]
+                    var view = new dmf.View()
+                    view._elm = elm
+                    this._add_view(elm.dataset.view, view)
+                }
+            },
+            
+            _scan_for_templates: function ()
+            {
+                var scripts = this._root_elm.querySelectorAll('script[type="text/html"]')
+                
+                for (var i=0; i<scripts.length; i++)
+                {
+                    var div = document.createElement('div')
+                    div.innerHTML = scripts[i].innerHTML
+                    var elements = div.querySelectorAll('[data-view]')
+                    
+                    for (var i=0; i<elements.length; i++)
+                    {
+                        var elm = elements[i]
+                        this._add_view(elm.dataset.view, this._create_view_subclass(elm))
+                    }
+                }
+            },
+            
+            _add_view: function (name, obj)
+            {
+                if (this[name])
+                {
+                    throw new Error("Attempt to redefine view '"+name+"'")
+                }
+                
+                this[name] = obj
+            },
+            
+            _create_view_subclass: function (elm)
+            {
+                var cls = function ()
+                {
+                    this.base_init()
+                    
+                    if (this.init)
+                    {
+                        this.init.apply(this, arguments)
+                    }
+                }
+                
+                Object.keys(dmf.View.prototype).forEach(function (k)
+                {
+                    cls.prototype[k] = dmf.View.prototype[k]
+                })
+                
+                cls.extend = function (obj)
+                {
+                    Object.keys(obj).forEach(function (k)
+                    {
+                        cls.prototype[k] = obj[k]
+                    })
+                }
+                
+                cls.template_element = cls.prototype.template_element = elm
+                
+                return cls
             }
         }
         

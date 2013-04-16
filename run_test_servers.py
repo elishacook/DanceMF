@@ -7,7 +7,6 @@ import SimpleHTTPServer
 import SocketServer
 import threading
 import time
-import socket
 
 class TestError(Exception):
     
